@@ -68,6 +68,32 @@ Migrasi dijalankan automatik semasa permulaan oleh perkhidmatan `migrate`.
 Zon waktu semua bekas ditetapkan ke `Asia/Kuala_Lumpur` — nombor giliran harian
 dan penutupan kaunter bergantung pada hari **tempatan**, bukan hari UTC.
 
+## Backup dan pemulihan
+
+Perkhidmatan `backup` mengambil `pg_dump` setiap hari, menyulitkannya dengan
+AES-256, dan menyimpannya ke `./backup` pada mini PC. Dump yang tidak
+disulitkan tidak pernah ditulis ke cakera.
+
+```bash
+docker compose exec backup ./latihan-pemulihan.sh   # latihan bulanan
+docker compose exec backup ./restore.sh /backup/klinik-....dump.gpg
+```
+
+**Latihan pemulihan bulanan adalah wajib**, bukan cadangan. Skrip latihan
+memulihkan ke pangkalan data ujian berasingan dan membandingkan kiraan setiap
+jadual — pangkalan data langsung tidak disentuh. Prosedur penuh, termasuk
+pemulihan sebenar selepas kehilangan data, ada dalam
+[`docs/PEMULIHAN.md`](docs/PEMULIHAN.md).
+
+`BACKUP_PASSPHRASE` mesti disimpan **di luar mini PC**. Tanpanya, tiada satu
+pun backup boleh dibuka.
+
+## Pencetak
+
+Tiga saiz digunakan: label ubat 70 × 40 mm, resit terma 80 mm, dan A4 untuk
+MC, surat rujukan dan borang makmal. Persediaan dalam
+[`docs/PENCETAK.md`](docs/PENCETAK.md).
+
 ## Kawalan akses
 
 Peranan: `ADMIN`, `DOCTOR`, `NURSE`, `FRONTDESK`, `PHARMACY`.
@@ -85,3 +111,4 @@ menandatangani rekod perubatan. Peraturan ditakrifkan sekali dalam
 | Integrasi API panel/TPA | PMCare, MediExpress dan HealthMetrics tiada API awam. Sistem menjana senarai tuntutan untuk dimasukkan ke portal mereka. |
 | Penghantaran LHDN e-Invoice | Ambang wajib ialah RM1 juta mulai 1 Januari 2026. Medan pangkalan data (`buyerTin`, `einvoiceUuid`, `einvoiceStatus`) sudah disediakan supaya penghantaran MyInvois boleh ditambah tanpa migrasi data. |
 | Apl mudah alih pesakit, telemedicine, multi-cawangan | Di luar skop keluaran pertama. |
+| Helper pembaca kad MyKad | Memerlukan perkakasan pembaca sebenar untuk disahkan. Taip nombor IC secara manual sudah mengisi tarikh lahir, jantina dan negeri kelahiran secara automatik. Boleh ditambah kemudian tanpa perubahan skema. |

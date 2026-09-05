@@ -49,3 +49,6 @@ next-env.d.ts
 /.claude/
 /.windsurf/
 /skills-lock.json
+
+# Backup pangkalan data — mengandungi rekod perubatan, walaupun tersulit.
+/backup/

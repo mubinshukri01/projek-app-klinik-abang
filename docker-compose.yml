@@ -74,6 +74,31 @@ services:
     depends_on:
       - app
 
+  # Backup harian bagi rekod perubatan. Kehilangan data adalah masalah
+  # undang-undang di bawah Akta 586, bukan sekadar kerugian teknikal.
+  backup:
+    build:
+      context: .
+      target: backup
+    restart: unless-stopped
+    environment:
+      DATABASE_URL: postgresql://${POSTGRES_USER:-klinik}:${POSTGRES_PASSWORD}@db:5432/${POSTGRES_DB:-klinik}
+      BACKUP_PASSPHRASE: ${BACKUP_PASSPHRASE:?tetapkan BACKUP_PASSPHRASE dalam .env}
+      BACKUP_DIR: /backup
+      BACKUP_HOUR: ${BACKUP_HOUR:-2}
+      KEEP_DAYS: ${KEEP_DAYS:-30}
+      # Salinan luar tapak. Biarkan kosong untuk backup tempatan sahaja.
+      RCLONE_REMOTE: ${RCLONE_REMOTE:-}
+      TZ: Asia/Kuala_Lumpur
+    volumes:
+      # Backup ditulis ke direktori hos supaya ia terselamat walaupun
+      # keseluruhan susunan Docker dibina semula.
+      - ./backup:/backup
+      - ${RCLONE_CONFIG_DIR:-./deploy/rclone}:/root/.config/rclone:ro
+    depends_on:
+      db:
+        condition: service_healthy
+
 volumes:
   db-data:
   caddy-data:

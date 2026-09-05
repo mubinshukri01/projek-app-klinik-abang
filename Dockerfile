@@ -47,3 +47,13 @@ COPY --from=builder --chown=klinik:nodejs /app/public ./public
 USER klinik
 EXPOSE 3000
 CMD ["node", "server.js"]
+
+# ── Backup ───────────────────────────────────────────────────────
+# Alat pangkalan data sahaja: tiada kod aplikasi, jadi bekas yang berjalan
+# sepanjang masa ini tidak mendedahkan apa-apa selain pg_dump dan gpg.
+FROM postgres:16-alpine AS backup
+RUN apk add --no-cache gnupg rclone tzdata
+WORKDIR /srv
+COPY deploy/backup.sh deploy/restore.sh deploy/latihan-pemulihan.sh deploy/backup-loop.sh ./
+RUN chmod +x ./*.sh
+CMD ["./backup-loop.sh"]
