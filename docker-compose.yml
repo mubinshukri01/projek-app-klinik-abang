@@ -1,0 +1,80 @@
+# Susunan on-prem untuk mini PC dalam klinik.
+#
+#   cp .env.example .env      # isi kata laluan dan rahsia
+#   docker compose up -d --build
+#
+# Kaunter mengakses sistem melalui http://<ip-mini-pc> pada LAN klinik.
+
+services:
+  db:
+    image: postgres:16-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-klinik}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?tetapkan POSTGRES_PASSWORD dalam .env}
+      POSTGRES_DB: ${POSTGRES_DB:-klinik}
+      TZ: Asia/Kuala_Lumpur
+    volumes:
+      - db-data:/var/lib/postgresql/data
+    # Tidak didedahkan ke LAN. Hanya bekas dalam susunan ini boleh mencapainya.
+    expose:
+      - "5432"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-klinik} -d ${POSTGRES_DB:-klinik}"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+
+  # Berjalan sekali sehingga selesai pada setiap permulaan, sebelum aplikasi
+  # bermula. Menjadikan naik taraf satu langkah sahaja.
+  migrate:
+    build:
+      context: .
+      target: migrator
+    environment:
+      DATABASE_URL: postgresql://${POSTGRES_USER:-klinik}:${POSTGRES_PASSWORD}@db:5432/${POSTGRES_DB:-klinik}?schema=public
+      TZ: Asia/Kuala_Lumpur
+    depends_on:
+      db:
+        condition: service_healthy
+    restart: "no"
+
+  app:
+    build:
+      context: .
+      target: runner
+    restart: unless-stopped
+    environment:
+      DATABASE_URL: postgresql://${POSTGRES_USER:-klinik}:${POSTGRES_PASSWORD}@db:5432/${POSTGRES_DB:-klinik}?schema=public
+      SESSION_SECRET: ${SESSION_SECRET:?tetapkan SESSION_SECRET dalam .env}
+      KIOSK_TOKEN: ${KIOSK_TOKEN:?tetapkan KIOSK_TOKEN dalam .env}
+      # Waktu tempatan penting: nombor giliran dan penutupan kaunter berasaskan
+      # hari tempatan, bukan hari UTC.
+      TZ: Asia/Kuala_Lumpur
+    depends_on:
+      db:
+        condition: service_healthy
+      migrate:
+        condition: service_completed_successfully
+    expose:
+      - "3000"
+
+  caddy:
+    image: caddy:2-alpine
+    restart: unless-stopped
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - ./deploy/Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy-data:/data
+      - caddy-config:/config
+    environment:
+      TZ: Asia/Kuala_Lumpur
+    depends_on:
+      - app
+
+volumes:
+  db-data:
+  caddy-data:
+  caddy-config:

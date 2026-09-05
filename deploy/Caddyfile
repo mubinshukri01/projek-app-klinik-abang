@@ -1,0 +1,30 @@
+# Proksi terbalik untuk LAN klinik.
+#
+# Secara lalai berkhidmat melalui HTTP biasa pada rangkaian dalaman klinik.
+# Jika mini PC mempunyai nama hos yang boleh dicapai dan anda mahukan HTTPS,
+# gantikan blok :80 dengan nama hos tersebut dan Caddy akan menguruskan sijil.
+
+:80 {
+	encode gzip
+
+	# Muat naik keputusan lab dan cetakan boleh melebihi had lalai.
+	request_body {
+		max_size 20MB
+	}
+
+	reverse_proxy app:3000
+
+	header {
+		X-Content-Type-Options nosniff
+		X-Frame-Options DENY
+		Referrer-Policy same-origin
+		-Server
+	}
+
+	log {
+		output file /data/akses.log {
+			roll_size 10MB
+			roll_keep 10
+		}
+	}
+}

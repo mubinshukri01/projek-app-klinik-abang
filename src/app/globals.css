@@ -1,0 +1,69 @@
+@import "tailwindcss";
+
+/*
+ * Tema klinik.
+ *
+ * Sengaja mod terang sahaja: skrin kaunter dan bilik rawatan dikongsi antara
+ * kakitangan dan sering dilihat di bawah lampu terang. Tema yang boleh berubah
+ * mengikut tetapan OS setiap PC akan menjadikan paparan tidak konsisten
+ * merentas kaunter, dan teks kelabu atas hitam sukar dibaca dengan cepat.
+ */
+@theme {
+  --color-ink: #0f1c24;
+  --color-ink-soft: #47606e;
+  --color-ink-faint: #7b929e;
+
+  --color-surface: #ffffff;
+  --color-canvas: #f2f6f8;
+  --color-line: #d9e3e8;
+  --color-line-soft: #e8eef1;
+
+  --color-brand: #0d7a6f;
+  --color-brand-dark: #0a5f57;
+  --color-brand-soft: #e3f3f1;
+
+  --color-danger: #b3261e;
+  --color-danger-soft: #fdeceb;
+  --color-warn: #8a5a00;
+  --color-warn-soft: #fff4e0;
+  --color-ok: #1a6b3c;
+  --color-ok-soft: #e5f4ea;
+  --color-info: #12547e;
+  --color-info-soft: #e6f1f8;
+
+  --font-sans: ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto,
+    "Helvetica Neue", Arial, sans-serif;
+  --font-mono: ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, monospace;
+}
+
+html {
+  color-scheme: light;
+}
+
+body {
+  background: var(--color-canvas);
+  color: var(--color-ink);
+  font-family: var(--font-sans);
+}
+
+/* Kaunter bekerja pantas dengan papan kekunci — jangan sembunyikan fokus. */
+:focus-visible {
+  outline: 2px solid var(--color-brand);
+  outline-offset: 2px;
+}
+
+/* Nombor rekod, IC dan amaun sejajar lebih kemas dengan digit lebar tetap. */
+.tabular {
+  font-variant-numeric: tabular-nums;
+}
+
+@media print {
+  /* Halaman cetak menyediakan susun aturnya sendiri; sembunyikan krom aplikasi. */
+  .no-print {
+    display: none !important;
+  }
+
+  body {
+    background: #fff;
+  }
+}

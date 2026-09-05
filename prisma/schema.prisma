@@ -1,0 +1,718 @@
+// Sistem Pengurusan Klinik — Klinik GP Semenyih
+//
+// Nota reka bentuk:
+//  - Semua nilai wang guna Decimal(10,2). JANGAN guna Float untuk RM.
+//  - Rekod perubatan tidak dipadam. Lawatan dibatalkan (CANCELLED), MC dibatalkan (VOID).
+//  - onDelete: Restrict pada rekod klinikal supaya sejarah pesakit tak boleh hilang
+//    secara tak sengaja (keperluan simpanan rekod di bawah Akta 586).
+
+generator client {
+  provider = "prisma-client"
+  output   = "../src/generated/prisma"
+}
+
+datasource db {
+  provider = "postgresql"
+}
+
+// ─────────────────────────── Enum ───────────────────────────
+
+enum Role {
+  ADMIN
+  DOCTOR
+  NURSE
+  FRONTDESK
+  PHARMACY
+}
+
+enum IdType {
+  MYKAD
+  MYKID
+  PASSPORT
+  POLIS_TENTERA
+  LAIN
+}
+
+enum Gender {
+  LELAKI
+  PEREMPUAN
+}
+
+enum VisitType {
+  WALKIN
+  APPOINTMENT
+}
+
+enum VisitStatus {
+  REGISTERED
+  WAITING
+  IN_CONSULT
+  DISPENSING
+  PAYMENT
+  COMPLETED
+  CANCELLED
+}
+
+/// Siapa yang menanggung kos lawatan ini.
+/// MADANI & PEKA_B40 = skim kerajaan, dituntut melalui PRIMIS (bukan dari sistem ini).
+enum PayerType {
+  SELF
+  PANEL
+  MADANI
+  PEKA_B40
+}
+
+enum AllergySeverity {
+  RINGAN
+  SEDERHANA
+  TERUK
+}
+
+enum DrugForm {
+  TABLET
+  KAPSUL
+  SIRAP
+  KRIM
+  SALAP
+  TITIS
+  SUNTIKAN
+  SEMBUR
+  SUPPOSITORI
+  LAIN
+}
+
+enum StockMovementType {
+  RECEIVE
+  DISPENSE
+  ADJUST
+  RETURN
+  EXPIRE
+}
+
+enum ServiceCategory {
+  KONSULTASI
+  PROSEDUR
+  SUNTIKAN
+  UJIAN
+  LAIN
+}
+
+enum InvoiceStatus {
+  DRAFT
+  ISSUED
+  PAID
+  PARTIAL
+  VOID
+}
+
+enum PaymentMethod {
+  CASH
+  CARD
+  DUITNOW_QR
+  EWALLET
+  PANEL
+}
+
+enum PanelType {
+  CORPORATE
+  TPA
+  GOVT
+}
+
+enum ClaimStatus {
+  DRAFT
+  SUBMITTED
+  PAID
+  PARTIAL
+  REJECTED
+}
+
+enum LabProvider {
+  PATHLAB
+  BP_HEALTHCARE
+  GRIBBLES
+  LAIN
+}
+
+enum LabOrderStatus {
+  ORDERED
+  COLLECTED
+  RESULT_READY
+  CANCELLED
+}
+
+enum DocStatus {
+  ACTIVE
+  VOID
+}
+
+// ────────────────────── Asas & keselamatan ──────────────────────
+
+/// Satu baris sahaja — tetapan klinik.
+model Clinic {
+  id             String   @id @default(cuid())
+  name           String
+  registrationNo String? // No. pendaftaran di bawah Akta 586
+  addressLine1   String
+  addressLine2   String?
+  postcode       String
+  city           String
+  state          String   @default("Selangor")
+  phone          String
+  email          String?
+  logoPath       String?
+  /// Nombor Pengenalan Cukai — untuk LHDN e-Invoice bila ambang RM1 juta dilepasi
+  tin            String?
+  sstRegistered  Boolean  @default(false)
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
+}
+
+model User {
+  id           String    @id @default(cuid())
+  username     String    @unique
+  name         String
+  passwordHash String
+  role         Role
+  /// No. pendaftaran Majlis Perubatan Malaysia — wajib untuk doktor yang tandatangan MC
+  mmcNumber    String?
+  phone        String?
+  active       Boolean   @default(true)
+  lastLoginAt  DateTime?
+  createdAt    DateTime  @default(now())
+  updatedAt    DateTime  @updatedAt
+
+  sessions           Session[]
+  auditLogs          AuditLog[]
+  consultations      Consultation[]
+  vitalsRecorded     Vitals[]
+  visitsAsDoctor     Visit[]              @relation("VisitDoctor")
+  stockMovements     StockMovement[]
+  dispensedItems     PrescriptionItem[]
+  invoicesIssued     Invoice[]
+  paymentsReceived   Payment[]
+  certificatesIssued MedicalCertificate[] @relation("McDoctor")
+  certificatesVoided MedicalCertificate[] @relation("McVoidedBy")
+  referralsIssued    ReferralLetter[]
+  labOrdersPlaced    LabOrder[]
+
+  @@index([role, active])
+}
+
+/// Sesi disimpan dalam DB (bukan JWT) supaya admin boleh log keluar pengguna serta-merta
+/// dan setiap sesi boleh diaudit.
+model Session {
+  id        String   @id @default(cuid())
+  /// Hash SHA-256 bagi token kuki. Token mentah tidak pernah disimpan.
+  tokenHash String   @unique
+  userId    String
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  expiresAt DateTime
+  ip        String?
+  userAgent String?
+  createdAt DateTime @default(now())
+
+  @@index([userId])
+  @@index([expiresAt])
+}
+
+/// Jejak audit PDPA — siapa buat apa, pada rekod mana, bila.
+model AuditLog {
+  id       String   @id @default(cuid())
+  actorId  String?
+  actor    User?    @relation(fields: [actorId], references: [id], onDelete: SetNull)
+  action   String // CREATE | UPDATE | DELETE | VIEW | LOGIN | LOGOUT | VOID | DISPENSE ...
+  entity   String // nama model, cth. "Patient"
+  entityId String?
+  before   Json?
+  after    Json?
+  ip       String?
+  at       DateTime @default(now())
+
+  @@index([entity, entityId])
+  @@index([actorId, at])
+  @@index([at])
+}
+
+/// Penjana nombor berjujukan (MRN, no. invois, siri MC, no. giliran).
+/// Guna `key` berperiod untuk set semula, cth. "INVOICE:2026" atau "QUEUE:2026-09-05".
+model NumberSequence {
+  key     String @id
+  prefix  String @default("")
+  current Int    @default(0)
+  padding Int    @default(5)
+}
+
+// ─────────────────────────── Pesakit ───────────────────────────
+
+model Patient {
+  id                String    @id @default(cuid())
+  /// Nombor rekod perubatan yang dipaparkan, cth. "P-00001"
+  mrn               String    @unique
+  idType            IdType    @default(MYKAD)
+  idNumber          String    @unique
+  name              String
+  dob               DateTime? @db.Date
+  gender            Gender
+  /// Diisi automatik dari digit tempat lahir MyKad
+  birthState        String?
+  nationality       String    @default("Malaysia")
+  race              String?
+  phone             String?
+  email             String?
+  addressLine1      String?
+  addressLine2      String?
+  postcode          String?
+  city              String?
+  state             String?
+  occupation        String?
+  bloodGroup        String?
+  emergencyName     String?
+  emergencyPhone    String?
+  emergencyRelation String?
+  notes             String?
+  /// Persetujuan PDPA untuk memproses data kesihatan
+  consentGivenAt    DateTime?
+  consentVersion    String?
+  createdAt         DateTime  @default(now())
+  updatedAt         DateTime  @updatedAt
+
+  allergies PatientAllergy[]
+  visits    Visit[]
+
+  @@index([name])
+  @@index([phone])
+}
+
+model PatientAllergy {
+  id        String          @id @default(cuid())
+  patientId String
+  patient   Patient         @relation(fields: [patientId], references: [id], onDelete: Cascade)
+  allergen  String
+  reaction  String?
+  severity  AllergySeverity @default(SEDERHANA)
+  notedAt   DateTime        @default(now())
+
+  @@index([patientId])
+}
+
+// ─────────────────────────── Lawatan ───────────────────────────
+
+model Visit {
+  id          String      @id @default(cuid())
+  patientId   String
+  patient     Patient     @relation(fields: [patientId], references: [id], onDelete: Restrict)
+  type        VisitType   @default(WALKIN)
+  status      VisitStatus @default(REGISTERED)
+  /// Nombor giliran yang dipaparkan, set semula setiap hari
+  queueNumber Int
+  queueDate   DateTime    @db.Date
+  doctorId    String?
+  doctor      User?       @relation("VisitDoctor", fields: [doctorId], references: [id], onDelete: SetNull)
+
+  payerType  PayerType @default(SELF)
+  panelId    String?
+  panel      Panel?    @relation(fields: [panelId], references: [id], onDelete: Restrict)
+  /// No. pekerja / no. ahli seperti pada kad panel
+  employeeId String?
+  glNumber   String?
+
+  arrivedAt    DateTime  @default(now())
+  completedAt  DateTime?
+  cancelledAt  DateTime?
+  cancelReason String?
+  createdAt    DateTime  @default(now())
+  updatedAt    DateTime  @updatedAt
+
+  vitals       Vitals?
+  consultation Consultation?
+  prescription Prescription?
+  invoice      Invoice?
+  certificates MedicalCertificate[]
+  referrals    ReferralLetter[]
+  labOrders    LabOrder[]
+
+  @@unique([queueDate, queueNumber])
+  @@index([status, queueDate])
+  @@index([patientId, arrivedAt])
+  @@index([panelId, arrivedAt])
+}
+
+model Vitals {
+  id              String   @id @default(cuid())
+  visitId         String   @unique
+  visit           Visit    @relation(fields: [visitId], references: [id], onDelete: Cascade)
+  temperature     Decimal? @db.Decimal(4, 1) // °C
+  systolic        Int?
+  diastolic       Int?
+  pulse           Int?
+  respiratoryRate Int?
+  spo2            Int?
+  weightKg        Decimal? @db.Decimal(5, 2)
+  heightCm        Decimal? @db.Decimal(5, 1)
+  /// Dikira semasa simpan daripada berat & tinggi
+  bmi             Decimal? @db.Decimal(4, 1)
+  bloodGlucose    Decimal? @db.Decimal(4, 1) // mmol/L
+  recordedById    String?
+  recordedBy      User?    @relation(fields: [recordedById], references: [id], onDelete: SetNull)
+  recordedAt      DateTime @default(now())
+}
+
+model Consultation {
+  id                  String    @id @default(cuid())
+  visitId             String    @unique
+  visit               Visit     @relation(fields: [visitId], references: [id], onDelete: Cascade)
+  doctorId            String
+  doctor              User      @relation(fields: [doctorId], references: [id], onDelete: Restrict)
+  presentingComplaint String?
+  history             String?
+  examination         String?
+  notes               String?
+  disposition         String?
+  followUpDate        DateTime? @db.Date
+  startedAt           DateTime  @default(now())
+  endedAt             DateTime?
+
+  diagnoses Diagnosis[]
+
+  @@index([doctorId, startedAt])
+}
+
+model Diagnosis {
+  id             String       @id @default(cuid())
+  consultationId String
+  consultation   Consultation @relation(fields: [consultationId], references: [id], onDelete: Cascade)
+  icd10Code      String
+  description    String
+  isPrimary      Boolean      @default(false)
+
+  @@index([consultationId])
+  @@index([icd10Code])
+}
+
+/// Subset ICD-10 untuk diagnosis GP biasa (jadual rujukan, di-seed).
+model Icd10Code {
+  code        String  @id
+  description String
+  category    String?
+
+  @@index([description])
+}
+
+// ─────────────────────────── Farmasi ───────────────────────────
+
+model Drug {
+  id           String   @id @default(cuid())
+  /// Nama termasuk kekuatan, cth. "Paracetamol 500mg". Unik supaya formulari
+  /// tidak berakhir dengan entri berganda untuk ubat yang sama.
+  name         String   @unique
+  genericName  String?
+  strength     String? // cth. "500mg"
+  form         DrugForm @default(TABLET)
+  /// Unit yang didispense, cth. "biji", "ml", "tiub"
+  unit         String   @default("biji")
+  /// Ubat berjadual di bawah Akta Dadah Berbahaya / psikotropik — perlu rekod tambahan
+  isControlled Boolean  @default(false)
+
+  defaultDose      String? // cth. "1"
+  defaultFrequency String? // cth. "3 kali sehari"
+  defaultDuration  Int? // hari
+  /// Arahan yang dicetak pada label ubat
+  instructionsMs   String?
+  instructionsEn   String?
+
+  sellPrice    Decimal @default(0) @db.Decimal(10, 2)
+  reorderLevel Int     @default(0)
+  active       Boolean @default(true)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  batches           DrugBatch[]
+  stockMovements    StockMovement[]
+  prescriptionItems PrescriptionItem[]
+
+  @@index([active])
+}
+
+/// Stok dipegang mengikut batch supaya dispensari boleh ikut FEFO
+/// (First Expired, First Out) dan penarikan balik boleh dijejak.
+model DrugBatch {
+  id             String   @id @default(cuid())
+  drugId         String
+  drug           Drug     @relation(fields: [drugId], references: [id], onDelete: Restrict)
+  batchNo        String
+  expiryDate     DateTime @db.Date
+  quantityOnHand Int      @default(0)
+  costPrice      Decimal? @db.Decimal(10, 2)
+  supplier       String?
+  receivedAt     DateTime @default(now())
+
+  movements         StockMovement[]
+  prescriptionItems PrescriptionItem[]
+
+  @@unique([drugId, batchNo, expiryDate])
+  @@index([drugId, expiryDate])
+  @@index([expiryDate])
+}
+
+/// Lejar tidak boleh ubah bagi setiap pergerakan stok. Baki DrugBatch.quantityOnHand
+/// sentiasa dikemas kini dalam transaksi yang sama dengan penciptaan rekod di sini.
+model StockMovement {
+  id            String            @id @default(cuid())
+  drugId        String
+  drug          Drug              @relation(fields: [drugId], references: [id], onDelete: Restrict)
+  batchId       String?
+  batch         DrugBatch?        @relation(fields: [batchId], references: [id], onDelete: Restrict)
+  type          StockMovementType
+  /// Positif untuk masuk, negatif untuk keluar
+  quantity      Int
+  /// Rujukan silang, cth. id lawatan untuk DISPENSE
+  referenceType String?
+  referenceId   String?
+  reason        String?
+  performedById String?
+  performedBy   User?             @relation(fields: [performedById], references: [id], onDelete: SetNull)
+  at            DateTime          @default(now())
+
+  @@index([drugId, at])
+  @@index([batchId])
+  @@index([referenceType, referenceId])
+}
+
+model Prescription {
+  id        String   @id @default(cuid())
+  visitId   String   @unique
+  visit     Visit    @relation(fields: [visitId], references: [id], onDelete: Cascade)
+  notes     String?
+  createdAt DateTime @default(now())
+
+  items PrescriptionItem[]
+}
+
+model PrescriptionItem {
+  id             String       @id @default(cuid())
+  prescriptionId String
+  prescription   Prescription @relation(fields: [prescriptionId], references: [id], onDelete: Cascade)
+  drugId         String
+  drug           Drug         @relation(fields: [drugId], references: [id], onDelete: Restrict)
+
+  dose         String
+  frequency    String
+  durationDays Int
+  /// Dikira automatik daripada dos × kekerapan × tempoh, boleh diubah oleh doktor
+  quantity     Int
+  instructions String
+  /// Harga seunit dikunci semasa preskripsi supaya perubahan harga kemudian
+  /// tidak mengubah invois yang lalu
+  unitPrice    Decimal @db.Decimal(10, 2)
+
+  dispensedBatchId String?
+  dispensedBatch   DrugBatch? @relation(fields: [dispensedBatchId], references: [id], onDelete: Restrict)
+  dispensedById    String?
+  dispensedBy      User?      @relation(fields: [dispensedById], references: [id], onDelete: SetNull)
+  dispensedAt      DateTime?
+  /// Diisi bila juruteknik memilih batch selain cadangan FEFO
+  overrideReason   String?
+
+  @@index([prescriptionId])
+  @@index([drugId])
+}
+
+// ─────────────────────────── Kewangan ───────────────────────────
+
+model ServiceItem {
+  id       String          @id @default(cuid())
+  code     String          @unique
+  name     String
+  category ServiceCategory @default(KONSULTASI)
+  price    Decimal         @db.Decimal(10, 2)
+  active   Boolean         @default(true)
+
+  @@index([active, category])
+}
+
+model Invoice {
+  id        String        @id @default(cuid())
+  invoiceNo String        @unique
+  visitId   String        @unique
+  visit     Visit         @relation(fields: [visitId], references: [id], onDelete: Restrict)
+  payerType PayerType     @default(SELF)
+  panelId   String?
+  panel     Panel?        @relation(fields: [panelId], references: [id], onDelete: Restrict)
+  status    InvoiceStatus @default(DRAFT)
+
+  subtotal   Decimal @default(0) @db.Decimal(10, 2)
+  discount   Decimal @default(0) @db.Decimal(10, 2)
+  tax        Decimal @default(0) @db.Decimal(10, 2)
+  total      Decimal @default(0) @db.Decimal(10, 2)
+  /// Jumlah yang sudah diterima daripada pesakit atau panel
+  amountPaid Decimal @default(0) @db.Decimal(10, 2)
+
+  issuedById String?
+  issuedBy   User?     @relation(fields: [issuedById], references: [id], onDelete: SetNull)
+  issuedAt   DateTime?
+  voidedAt   DateTime?
+  voidReason String?
+  createdAt  DateTime  @default(now())
+  updatedAt  DateTime  @updatedAt
+
+  // ── Medan LHDN e-Invoice: sengaja nullable. Klinik di bawah ambang
+  //    RM1 juta adalah dikecualikan; medan ini disediakan supaya penghantaran
+  //    MyInvois boleh ditambah kemudian tanpa migrasi data.
+  buyerTin       String?
+  einvoiceUuid   String?
+  einvoiceStatus String?
+
+  lines      InvoiceLine[]
+  payments   Payment[]
+  claimItems PanelClaimItem[]
+
+  @@index([status, issuedAt])
+  @@index([panelId, status])
+}
+
+model InvoiceLine {
+  id          String  @id @default(cuid())
+  invoiceId   String
+  invoice     Invoice @relation(fields: [invoiceId], references: [id], onDelete: Cascade)
+  /// SERVICE | DRUG
+  itemType    String
+  /// id ServiceItem atau Drug — bukan foreign key supaya baris invois
+  /// kekal utuh walaupun item dipadam daripada katalog
+  refId       String?
+  description String
+  quantity    Int     @default(1)
+  unitPrice   Decimal @db.Decimal(10, 2)
+  amount      Decimal @db.Decimal(10, 2)
+
+  @@index([invoiceId])
+}
+
+model Payment {
+  id           String        @id @default(cuid())
+  invoiceId    String
+  invoice      Invoice       @relation(fields: [invoiceId], references: [id], onDelete: Restrict)
+  method       PaymentMethod
+  amount       Decimal       @db.Decimal(10, 2)
+  reference    String?
+  receivedById String?
+  receivedBy   User?         @relation(fields: [receivedById], references: [id], onDelete: SetNull)
+  receivedAt   DateTime      @default(now())
+
+  @@index([invoiceId])
+  @@index([receivedAt])
+}
+
+model Panel {
+  id            String    @id @default(cuid())
+  name          String    @unique
+  type          PanelType @default(CORPORATE)
+  /// Kod klinik yang diberi oleh panel/TPA — wajib dipetik pada setiap tuntutan
+  clinicCode    String?
+  contactPerson String?
+  phone         String?
+  email         String?
+  /// cth. "Bulanan", "Dua minggu sekali"
+  billingCycle  String?
+  active        Boolean   @default(true)
+  notes         String?
+
+  visits   Visit[]
+  invoices Invoice[]
+  claims   PanelClaim[]
+}
+
+model PanelClaim {
+  id          String      @id @default(cuid())
+  claimNo     String      @unique
+  panelId     String
+  panel       Panel       @relation(fields: [panelId], references: [id], onDelete: Restrict)
+  periodStart DateTime    @db.Date
+  periodEnd   DateTime    @db.Date
+  status      ClaimStatus @default(DRAFT)
+  totalAmount Decimal     @default(0) @db.Decimal(10, 2)
+  amountPaid  Decimal     @default(0) @db.Decimal(10, 2)
+  submittedAt DateTime?
+  paidAt      DateTime?
+  remarks     String?
+  createdAt   DateTime    @default(now())
+
+  items PanelClaimItem[]
+
+  @@index([panelId, status])
+}
+
+model PanelClaimItem {
+  id        String     @id @default(cuid())
+  claimId   String
+  claim     PanelClaim @relation(fields: [claimId], references: [id], onDelete: Cascade)
+  invoiceId String
+  invoice   Invoice    @relation(fields: [invoiceId], references: [id], onDelete: Restrict)
+  amount    Decimal    @db.Decimal(10, 2)
+
+  /// Satu invois hanya boleh dituntut sekali
+  @@unique([invoiceId])
+  @@index([claimId])
+}
+
+// ─────────────────────────── Dokumen ───────────────────────────
+
+/// Sijil cuti sakit. Nombor siri tidak boleh diguna semula dan rekod tidak
+/// boleh dipadam — hanya dibatalkan (VOID) dengan sebab.
+model MedicalCertificate {
+  id         String    @id @default(cuid())
+  serialNo   String    @unique
+  visitId    String
+  visit      Visit     @relation(fields: [visitId], references: [id], onDelete: Restrict)
+  doctorId   String
+  doctor     User      @relation("McDoctor", fields: [doctorId], references: [id], onDelete: Restrict)
+  fromDate   DateTime  @db.Date
+  toDate     DateTime  @db.Date
+  days       Int
+  reason     String?
+  status     DocStatus @default(ACTIVE)
+  voidReason String?
+  voidedById String?
+  voidedBy   User?     @relation("McVoidedBy", fields: [voidedById], references: [id], onDelete: SetNull)
+  voidedAt   DateTime?
+  issuedAt   DateTime  @default(now())
+
+  @@index([visitId])
+  @@index([issuedAt])
+}
+
+model ReferralLetter {
+  id              String   @id @default(cuid())
+  visitId         String
+  visit           Visit    @relation(fields: [visitId], references: [id], onDelete: Restrict)
+  toFacility      String
+  toDoctor        String?
+  specialty       String?
+  reason          String
+  clinicalSummary String?
+  issuedById      String
+  issuedBy        User     @relation(fields: [issuedById], references: [id], onDelete: Restrict)
+  issuedAt        DateTime @default(now())
+
+  @@index([visitId])
+}
+
+model LabOrder {
+  id           String         @id @default(cuid())
+  visitId      String
+  visit        Visit          @relation(fields: [visitId], references: [id], onDelete: Restrict)
+  provider     LabProvider    @default(PATHLAB)
+  /// Nama ujian yang diminta
+  tests        String[]
+  clinicalNote String?
+  status       LabOrderStatus @default(ORDERED)
+  orderedById  String
+  orderedBy    User           @relation(fields: [orderedById], references: [id], onDelete: Restrict)
+  orderedAt    DateTime       @default(now())
+  resultNotes  String?
+  resultAt     DateTime?
+
+  @@index([visitId])
+  @@index([status])
+}
