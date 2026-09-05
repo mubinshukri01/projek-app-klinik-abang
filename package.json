@@ -15,7 +15,8 @@
     "db:deploy": "prisma migrate deploy && prisma generate",
     "db:reset": "prisma migrate reset --force && prisma generate",
     "db:seed": "tsx prisma/seed.ts",
-    "db:studio": "prisma studio"
+    "db:studio": "prisma studio",
+    "e2e": "node e2e/smoke.mjs && node e2e/perjalanan.mjs"
   },
   "dependencies": {
     "@prisma/adapter-pg": "^7.10.0",
