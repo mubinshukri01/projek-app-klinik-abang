@@ -6,9 +6,11 @@ import { z } from "zod";
 import { logAudit } from "@/lib/audit";
 import { requireArea, type SessionUser } from "@/lib/auth";
 import { fromDateInput } from "@/lib/dates";
+import { parseLabTests, validateMcRange } from "@/lib/documents";
 import { createDraftInvoice } from "@/lib/invoice";
 import { calculateBmi, calculateQuantity } from "@/lib/prescription";
 import { prisma } from "@/lib/prisma";
+import { nextMcSerial } from "@/lib/sequence";
 
 export interface FormState {
   error: string | null;
@@ -475,4 +477,184 @@ function str(value: FormDataEntryValue | null): string | null {
   if (typeof value !== "string") return null;
   const trimmed = value.trim();
   return trimmed.length > 0 ? trimmed : null;
+}
+
+// ─────────────────────────── dokumen ───────────────────────────
+
+/**
+ * Mengeluarkan sijil cuti sakit.
+ *
+ * Nombor siri diambil daripada penjujukan atomik dan tidak pernah diguna
+ * semula. MC ialah dokumen yang diserahkan kepada majikan, jadi nombor yang
+ * bertindih akan menjejaskan kepercayaan terhadap kesemuanya.
+ */
+export async function issueMc(_prev: FormState, formData: FormData): Promise<FormState> {
+  const user = await requireDoctor();
+
+  const visitId = String(formData.get("visitId") ?? "");
+  if (!visitId) return { error: "Lawatan tidak dinyatakan." };
+
+  const from = fromDateInput(String(formData.get("fromDate") ?? ""));
+  const to = fromDateInput(String(formData.get("toDate") ?? ""));
+  const check = validateMcRange(from, to);
+  if (!check.ok) return { error: check.error ?? "Julat tarikh tidak sah." };
+
+  // Doktor yang menandatangani MC mesti mempunyai nombor pendaftaran MMC —
+  // majikan dan syarikat insurans menyemaknya.
+  if (!user.mmcNumber) {
+    return {
+      error:
+        "Nombor pendaftaran MMC anda belum ditetapkan. Minta pentadbir mengemas kini profil anda sebelum mengeluarkan MC.",
+    };
+  }
+
+  const visit = await prisma.visit.findUnique({
+    where: { id: visitId },
+    select: { id: true, patient: { select: { mrn: true } } },
+  });
+  if (!visit) return { error: "Lawatan tidak dijumpai." };
+
+  const mc = await prisma.$transaction(async (tx) => {
+    const serialNo = await nextMcSerial(new Date(), tx);
+    return tx.medicalCertificate.create({
+      data: {
+        serialNo,
+        visitId,
+        doctorId: user.id,
+        fromDate: from!,
+        toDate: to!,
+        days: check.days,
+        reason: str(formData.get("reason")),
+      },
+      select: { id: true, serialNo: true },
+    });
+  });
+
+  await logAudit({
+    actorId: user.id,
+    action: "CREATE",
+    entity: "MedicalCertificate",
+    entityId: mc.id,
+    after: { serialNo: mc.serialNo, patient: visit.patient.mrn, days: check.days },
+  });
+
+  revalidatePath(`/konsultasi/${visitId}`);
+  return { error: null, ok: true };
+}
+
+/**
+ * Membatalkan MC.
+ *
+ * Sijil tidak pernah dipadam — nombor sirinya sudah pun berada di tangan
+ * pesakit dan mungkin majikan. Membatalkan menyimpan rekod bahawa ia tidak
+ * lagi sah, berserta sebabnya.
+ */
+export async function voidMc(_prev: FormState, formData: FormData): Promise<FormState> {
+  const user = await requireDoctor();
+
+  const visitId = String(formData.get("visitId") ?? "");
+  const mcId = String(formData.get("mcId") ?? "");
+  const reason = String(formData.get("voidReason") ?? "").trim();
+  if (!mcId) return { error: "Sijil tidak dinyatakan." };
+  if (reason.length < 3) return { error: "Nyatakan sebab pembatalan." };
+
+  const mc = await prisma.medicalCertificate.findUnique({
+    where: { id: mcId },
+    select: { id: true, serialNo: true, status: true },
+  });
+  if (!mc) return { error: "Sijil tidak dijumpai." };
+  if (mc.status === "VOID") return { error: "Sijil ini sudah dibatalkan." };
+
+  await prisma.medicalCertificate.update({
+    where: { id: mcId },
+    data: {
+      status: "VOID",
+      voidReason: reason,
+      voidedById: user.id,
+      voidedAt: new Date(),
+    },
+  });
+
+  await logAudit({
+    actorId: user.id,
+    action: "VOID",
+    entity: "MedicalCertificate",
+    entityId: mcId,
+    before: { serialNo: mc.serialNo, status: "ACTIVE" },
+    after: { status: "VOID", reason },
+  });
+
+  revalidatePath(`/konsultasi/${visitId}`);
+  return { error: null, ok: true };
+}
+
+export async function issueReferral(_prev: FormState, formData: FormData): Promise<FormState> {
+  const user = await requireDoctor();
+
+  const visitId = String(formData.get("visitId") ?? "");
+  const toFacility = str(formData.get("toFacility"));
+  const reason = str(formData.get("reason"));
+  if (!visitId) return { error: "Lawatan tidak dinyatakan." };
+  if (!toFacility) return { error: "Nyatakan hospital atau klinik yang dirujuk." };
+  if (!reason) return { error: "Nyatakan sebab rujukan." };
+
+  const referral = await prisma.referralLetter.create({
+    data: {
+      visitId,
+      toFacility,
+      toDoctor: str(formData.get("toDoctor")),
+      specialty: str(formData.get("specialty")),
+      reason,
+      clinicalSummary: str(formData.get("clinicalSummary")),
+      issuedById: user.id,
+    },
+    select: { id: true },
+  });
+
+  await logAudit({
+    actorId: user.id,
+    action: "CREATE",
+    entity: "ReferralLetter",
+    entityId: referral.id,
+    after: { toFacility, reason },
+  });
+
+  revalidatePath(`/konsultasi/${visitId}`);
+  return { error: null, ok: true };
+}
+
+export async function orderLab(_prev: FormState, formData: FormData): Promise<FormState> {
+  const user = await requireDoctor();
+
+  const visitId = String(formData.get("visitId") ?? "");
+  const provider = String(formData.get("provider") ?? "PATHLAB");
+  const tests = parseLabTests(String(formData.get("tests") ?? ""));
+
+  if (!visitId) return { error: "Lawatan tidak dinyatakan." };
+  if (!["PATHLAB", "BP_HEALTHCARE", "GRIBBLES", "LAIN"].includes(provider)) {
+    return { error: "Pembekal makmal tidak sah." };
+  }
+  if (tests.length === 0) return { error: "Senaraikan sekurang-kurangnya satu ujian." };
+
+  const order = await prisma.labOrder.create({
+    data: {
+      visitId,
+      provider: provider as "PATHLAB" | "BP_HEALTHCARE" | "GRIBBLES" | "LAIN",
+      tests,
+      clinicalNote: str(formData.get("clinicalNote")),
+      orderedById: user.id,
+    },
+    select: { id: true },
+  });
+
+  await logAudit({
+    actorId: user.id,
+    action: "CREATE",
+    entity: "LabOrder",
+    entityId: order.id,
+    after: { provider, tests },
+  });
+
+  revalidatePath(`/konsultasi/${visitId}`);
+  return { error: null, ok: true };
 }

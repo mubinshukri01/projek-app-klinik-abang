@@ -254,3 +254,114 @@ body {
     margin: 0;
   }
 }
+
+/* ── Dokumen A4 (MC, surat rujukan, borang makmal) ─────────────── */
+.doc {
+  width: 210mm;
+  min-height: 297mm;
+  padding: 20mm 18mm;
+  margin: 0 auto;
+  background: #fff;
+  color: #000;
+  font-size: 11pt;
+  line-height: 1.6;
+}
+
+.doc-head {
+  text-align: center;
+  border-bottom: 2px solid #000;
+  padding-bottom: 4mm;
+  margin-bottom: 8mm;
+}
+
+.doc-head h1 {
+  font-size: 16pt;
+  font-weight: 700;
+  letter-spacing: 0.02em;
+}
+
+.doc-head p {
+  font-size: 9.5pt;
+  line-height: 1.4;
+}
+
+.doc-title {
+  text-align: center;
+  font-size: 13pt;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  margin-bottom: 6mm;
+}
+
+.doc-serial {
+  text-align: right;
+  font-size: 10pt;
+  margin-bottom: 6mm;
+}
+
+.doc-body p {
+  margin-bottom: 4mm;
+}
+
+.doc-fields {
+  margin-bottom: 6mm;
+}
+
+.doc-field {
+  display: flex;
+  gap: 4mm;
+  margin-bottom: 1.5mm;
+}
+
+.doc-field dt {
+  width: 40mm;
+  flex-shrink: 0;
+  font-weight: 600;
+}
+
+.doc-list {
+  list-style: decimal;
+  padding-left: 6mm;
+  margin-bottom: 6mm;
+}
+
+.doc-sign {
+  margin-top: 20mm;
+  font-size: 10pt;
+  line-height: 1.5;
+}
+
+.doc-sign-line {
+  width: 65mm;
+  border-bottom: 1px solid #000;
+  margin-bottom: 2mm;
+}
+
+.doc-sign-name {
+  font-weight: 700;
+}
+
+.doc-stamp {
+  margin-top: 10mm;
+  color: #666;
+  font-size: 9pt;
+}
+
+.doc-void {
+  text-align: center;
+  font-size: 14pt;
+  font-weight: 700;
+  color: #b3261e;
+  border: 2px solid #b3261e;
+  padding: 3mm;
+  margin-bottom: 6mm;
+}
+
+@media print {
+  .doc {
+    width: auto;
+    min-height: auto;
+    padding: 0;
+  }
+}

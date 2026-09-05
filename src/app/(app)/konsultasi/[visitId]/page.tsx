@@ -6,7 +6,7 @@ import { ButtonLink } from "@/components/ui/button";
 import { Card, CardBody, CardHeader } from "@/components/ui/card";
 import { PageHeader } from "@/components/ui/page";
 import { requireArea } from "@/lib/auth";
-import { formatDateOnly, toDateInput } from "@/lib/dates";
+import { formatDateOnly, toDateInput, toDateOnly } from "@/lib/dates";
 import { drugsWithStock } from "@/lib/inventory";
 import { formatAge, formatIc } from "@/lib/mykad";
 import { prisma } from "@/lib/prisma";
@@ -14,6 +14,7 @@ import { PAYER_LABEL, VISIT_STATUS_LABEL, VISIT_STATUS_TONE } from "@/lib/visit-
 import type { DrugForm } from "@/generated/prisma/enums";
 import { AllergyForm } from "./allergy-form";
 import { CompleteForm } from "./complete-form";
+import { DocumentsSection } from "./documents-section";
 import { DiagnosisSection } from "./diagnosis-section";
 import { NotesForm } from "./notes-form";
 import { PrescriptionSection } from "./prescription-section";
@@ -43,6 +44,9 @@ export default async function ConsultationPage({ params }: PageProps<"/konsultas
           },
         },
       },
+      certificates: { orderBy: { issuedAt: "desc" } },
+      referrals: { orderBy: { issuedAt: "desc" } },
+      labOrders: { orderBy: { orderedAt: "desc" } },
     },
   });
 
@@ -196,6 +200,42 @@ export default async function ConsultationPage({ params }: PageProps<"/konsultas
                 readOnly={clinicalReadOnly}
                 drugs={drugs.map((d) => ({ ...d, form: d.form as DrugForm }))}
                 items={items}
+              />
+            </CardBody>
+          </Card>
+
+          <Card>
+            <CardHeader
+              title="Dokumen"
+              description="MC, surat rujukan dan permintaan makmal untuk lawatan ini."
+            />
+            <CardBody>
+              <DocumentsSection
+                visitId={visit.id}
+                readOnly={clinicalReadOnly}
+                today={toDateInput(toDateOnly())}
+                mcs={visit.certificates.map((mc) => ({
+                  id: mc.id,
+                  serialNo: mc.serialNo,
+                  fromLabel: formatDateOnly(mc.fromDate),
+                  toLabel: formatDateOnly(mc.toDate),
+                  days: mc.days,
+                  reason: mc.reason,
+                  voided: mc.status === "VOID",
+                  voidReason: mc.voidReason,
+                }))}
+                referrals={visit.referrals.map((r) => ({
+                  id: r.id,
+                  toFacility: r.toFacility,
+                  specialty: r.specialty,
+                  reason: r.reason,
+                }))}
+                labOrders={visit.labOrders.map((l) => ({
+                  id: l.id,
+                  provider: l.provider,
+                  tests: l.tests,
+                  status: l.status,
+                }))}
               />
             </CardBody>
           </Card>

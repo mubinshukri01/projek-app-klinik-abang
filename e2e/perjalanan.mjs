@@ -223,6 +223,65 @@ try {
   check("ubat ditambah dengan kuantiti dikira", withRx.includes("24 biji"));
   check("arahan label BM disimpan", withRx.includes("4 kali sehari"));
 
+  // ── Dokumen: MC, rujukan, permintaan makmal ──
+  await doc.click('button:has-text("Keluarkan MC")');
+  await doc.waitForSelector("#fromDate", { timeout: 5000 });
+  const mcFrom = await doc.inputValue("#fromDate");
+  // Tiga hari cuti: hari pertama dan terakhir dikira.
+  const mcTo = new Date(`${mcFrom}T00:00:00Z`);
+  mcTo.setUTCDate(mcTo.getUTCDate() + 2);
+  await doc.fill("#toDate", mcTo.toISOString().slice(0, 10));
+  await doc.fill("#mcReason", "Demam");
+  await doc.click('button:has-text("Keluarkan MC")>>nth=-1');
+  await doc.waitForFunction(
+    () => /MC-\d{4}-\d{5}/.test(document.querySelector("main")?.textContent ?? ""),
+    null,
+    { timeout: 15000 },
+  );
+  const withMc = await doc.textContent("main");
+  const mcSerial = withMc.match(/MC-\d{4}-\d{5}/)?.[0];
+  check("MC diberi nombor siri", Boolean(mcSerial), "tiada nombor siri MC");
+  check("MC mengira 3 hari secara inklusif", withMc.includes("3 hari"));
+
+  // Cetakan MC
+  const mcHref = await doc.locator('a:has-text("Cetak")').first().getAttribute("href");
+  const mcUrl = doc.url();
+  await doc.goto(`${BASE}${mcHref}`, { waitUntil: "domcontentloaded" });
+  const mcDoc = await doc.textContent("body");
+  check("MC menunjukkan nama klinik", mcDoc.includes("Klinik Contoh Semenyih"));
+  check("MC menunjukkan nama pesakit", mcDoc.includes(name));
+  check("MC menunjukkan nombor siri", mcDoc.includes(mcSerial));
+  check("MC menyatakan kedua-dua tarikh termasuk", mcDoc.includes("kedua-dua tarikh termasuk"));
+  check("MC menunjukkan nombor MMC doktor", mcDoc.includes("MMC-00000"));
+  await doc.goto(mcUrl, { waitUntil: "domcontentloaded" });
+
+  // Surat rujukan mesti membawa alahan.
+  await doc.click('button:has-text("Surat rujukan")');
+  await doc.waitForSelector("#toFacility", { timeout: 5000 });
+  await doc.fill("#toFacility", "Hospital Kajang");
+  await doc.fill("#specialty", "Perubatan Am");
+  await doc.fill("#referralReason", "Perlu penilaian lanjut");
+  await doc.click('button:has-text("Keluarkan surat rujukan")');
+  await doc.waitForFunction(
+    () => document.querySelector("main")?.textContent?.includes("Hospital Kajang"),
+    null,
+    { timeout: 15000 },
+  );
+  check("surat rujukan direkod", true);
+
+  // Permintaan makmal
+  await doc.click('button:has-text("Permintaan makmal")');
+  await doc.waitForSelector("#tests", { timeout: 5000 });
+  await doc.fill("#tests", "FBC, RP\nLFT");
+  await doc.click('button:has-text("Buat permintaan")');
+  await doc.waitForFunction(
+    () => document.querySelector("main")?.textContent?.includes("FBC"),
+    null,
+    { timeout: 15000 },
+  );
+  const withLab = await doc.textContent("main");
+  check("permintaan makmal merekod ujian", withLab.includes("FBC") && withLab.includes("LFT"));
+
   // ── Tutup konsultasi, pesakit ke dispensari ──
   await Promise.all([
     doc.waitForURL(/\/konsultasi$/, { timeout: 15000 }),
