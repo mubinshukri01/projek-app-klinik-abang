@@ -72,6 +72,7 @@ export interface DrugWithStock {
   sellPrice: string;
   isControlled: boolean;
   onHand: number;
+  reorderLevel: number;
   defaultDose: string | null;
   defaultFrequency: string | null;
   defaultDuration: number | null;
@@ -93,6 +94,7 @@ export function drugsWithStock() {
            d."sellPrice"::text     AS "sellPrice",
            d."isControlled",
            COALESCE(SUM(b."quantityOnHand"), 0)::int AS "onHand",
+           d."reorderLevel",
            d."defaultDose",
            d."defaultFrequency",
            d."defaultDuration",

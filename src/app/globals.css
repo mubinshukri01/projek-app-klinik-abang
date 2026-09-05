@@ -67,3 +67,97 @@ body {
     background: #fff;
   }
 }
+
+/* ── Label ubat ──────────────────────────────────────────────────
+ * Bersaiz untuk stok label 70mm x 40mm, saiz biasa untuk pencetak
+ * label dispensari. Tukar @page di bawah jika klinik menggunakan
+ * saiz lain.
+ */
+.label {
+  width: 70mm;
+  min-height: 40mm;
+  padding: 3mm;
+  border: 1px dashed var(--color-line);
+  display: flex;
+  flex-direction: column;
+  gap: 1mm;
+  page-break-inside: avoid;
+  break-inside: avoid;
+}
+
+.label-head {
+  display: flex;
+  flex-direction: column;
+  font-size: 7pt;
+  line-height: 1.2;
+  color: var(--color-ink-soft);
+}
+
+.label-head strong {
+  font-size: 8pt;
+  color: var(--color-ink);
+}
+
+.label-patient {
+  font-size: 8pt;
+  border-top: 1px solid var(--color-line);
+  padding-top: 1mm;
+}
+
+.label-drug {
+  font-size: 9pt;
+  font-weight: 600;
+  display: flex;
+  justify-content: space-between;
+  gap: 2mm;
+}
+
+.label-qty {
+  white-space: nowrap;
+}
+
+/* Satu-satunya baris yang mesti difahami pesakit di rumah. */
+.label-instructions {
+  font-size: 10pt;
+  font-weight: 700;
+  line-height: 1.3;
+  flex: 1;
+}
+
+.label-foot {
+  display: flex;
+  flex-direction: column;
+  font-size: 6.5pt;
+  color: var(--color-ink-soft);
+  border-top: 1px solid var(--color-line);
+  padding-top: 1mm;
+}
+
+.label-warning {
+  font-weight: 600;
+}
+
+.label-sheet {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4mm;
+  padding: 4mm;
+}
+
+@media print {
+  @page {
+    size: 70mm 40mm;
+    margin: 0;
+  }
+
+  .label {
+    border: none;
+    width: 70mm;
+    height: 40mm;
+  }
+
+  .label-sheet {
+    gap: 0;
+    padding: 0;
+  }
+}

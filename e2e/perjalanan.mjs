@@ -235,6 +235,88 @@ try {
   check("pesakit berpindah ke dispensari", board2.includes(name));
 
   await doctorCtx.close();
+
+  console.log("\n5. Dispensari — FEFO dan penolakan stok");
+  const pharmCtx = await browser.newContext();
+  const pharm = await pharmCtx.newPage();
+  await login(pharm, "farmasi");
+
+  await pharm.goto(`${BASE}/dispensari`, { waitUntil: "domcontentloaded" });
+  const dispList = await pharm.textContent("main");
+  check("pesakit muncul dalam baris dispensari", dispList.includes(name));
+
+  const dispRow = pharm.locator("tr", { hasText: name });
+  await Promise.all([
+    pharm.waitForURL(/\/dispensari\/[^/]+$/, { timeout: 15000 }),
+    dispRow.locator('a:has-text("Sediakan ubat")').click(),
+  ]);
+  check("skrin sediakan ubat dibuka", /\/dispensari\/[^/]+$/.test(pharm.url()), pharm.url());
+
+  const beforeDispense = await pharm.textContent("main");
+  check("amaran alahan dipaparkan kepada farmasi", beforeDispense.includes("⚠ ALAHAN"));
+  check("cadangan FEFO dipaparkan", beforeDispense.includes("Cadangan FEFO"));
+
+  // Seed memberi Paracetamol dua batch: SEED-4M (luput 4 bulan) dan
+  // SEED-18M (luput 18 bulan). FEFO mesti mencadangkan yang luput dahulu.
+  check(
+    "FEFO mencadangkan batch luput terawal",
+    beforeDispense.includes("SEED-4M"),
+    "cadangan tidak menyebut SEED-4M",
+  );
+  check(
+    "FEFO tidak mencadangkan batch luput lewat",
+    !beforeDispense.includes("SEED-18M"),
+    "cadangan tersilap menyebut SEED-18M",
+  );
+
+  await pharm.click('button:has-text("Sahkan & tolak stok")');
+  await pharm.waitForFunction(
+    () => document.querySelector("main")?.textContent?.includes("Disediakan"),
+    null,
+    { timeout: 15000 },
+  );
+  const afterDispense = await pharm.textContent("main");
+  check("ubat ditanda disediakan", afterDispense.includes("Disediakan"));
+  check("batch yang digunakan direkod", afterDispense.includes("SEED-4M"));
+
+  // ── Label ubat ──
+  // Ikut href dan bukan klik: pautan membuka tab baharu.
+  const labelHref = await pharm.locator('a:has-text("Cetak label")').first().getAttribute("href");
+  await pharm.goto(`${BASE}${labelHref}`, { waitUntil: "domcontentloaded" });
+  const label = await pharm.textContent("body");
+  check("label menunjukkan nama pesakit", label.includes(name));
+  check("label menunjukkan nama ubat", label.includes("Paracetamol 500mg"));
+  check("label menunjukkan arahan BM", label.includes("4 kali sehari"));
+  check("label menunjukkan kuantiti dan unit", label.includes("24 biji"));
+  check("label menunjukkan batch dan tarikh luput", label.includes("SEED-4M") && label.includes("Luput"));
+  check("label membawa amaran keselamatan", label.includes("Simpan jauh dari kanak-kanak"));
+
+  // ── Lejar stok mesti menerangkan penolakan ──
+  await pharm.goto(`${BASE}/inventori?cari=Paracetamol%20500`, { waitUntil: "domcontentloaded" });
+  await pharm.click('a:has-text("Paracetamol 500mg")');
+  await pharm.waitForURL(/\/inventori\/[^/]+$/, { timeout: 15000 });
+  const ledger = await pharm.textContent("main");
+  check("lejar merekod pergerakan dispense", ledger.includes("Dispense"));
+  check("lejar menunjukkan kuantiti negatif", ledger.includes("-24"));
+
+  // ── Tutup dispensari, pesakit ke kaunter bayaran ──
+  await pharm.goto(`${BASE}/dispensari`, { waitUntil: "domcontentloaded" });
+  const stillThere = pharm.locator("tr", { hasText: name });
+  await Promise.all([
+    pharm.waitForURL(/\/dispensari\/[^/]+$/, { timeout: 15000 }),
+    stillThere.locator('a:has-text("Sediakan ubat")').click(),
+  ]);
+  await Promise.all([
+    pharm.waitForURL(/\/dispensari$/, { timeout: 15000 }),
+    pharm.click('button:has-text("Selesai & hantar ke kaunter")'),
+  ]);
+  check("dispensari selesai", /\/dispensari$/.test(pharm.url()), pharm.url());
+
+  await pharm.goto(`${BASE}/queue`, { waitUntil: "domcontentloaded" });
+  const finalBoard = await pharm.textContent("main");
+  check("pesakit kini menunggu bayaran", finalBoard.includes(name));
+
+  await pharmCtx.close();
 } finally {
   await ctx.close();
   await browser.close();
