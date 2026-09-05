@@ -534,6 +534,105 @@ try {
   check("penyata menunjukkan invois panel tertunggak", closing2.includes("Tertunggak"));
 
   await cashCtx2.close();
+
+  console.log("\n8. Tuntutan panel");
+  const adminCtx = await browser.newContext();
+  const admin = await adminCtx.newPage();
+  await login(admin, "admin");
+
+  await admin.goto(`${BASE}/panel`, { waitUntil: "domcontentloaded" });
+  const panelHome = await admin.textContent("main");
+  // Kad "Belum dituntut" mesti mengira invois panel daripada langkah 7.
+  // Jangan uji "RM 0.00" — kad "Tuntutan tertunggak" sah bernilai sifar.
+  check(
+    "papan panel mengira invois belum dituntut",
+    !panelHome.includes("0 invois panel belum dimasukkan"),
+    "kad menunjukkan sifar invois belum dituntut",
+  );
+
+  // Tempoh mesti merangkumi hari ini — invois panel dikeluarkan sebentar tadi.
+  const todayIso = new Date().toISOString().slice(0, 10);
+  await admin.selectOption("#panelId", { index: 1 });
+  await admin.fill("#periodStart", todayIso);
+  await admin.fill("#periodEnd", todayIso);
+  await Promise.all([
+    admin.waitForURL(/\/panel\/[^/]+$/, { timeout: 15000 }),
+    admin.click('button:has-text("Bina tuntutan")'),
+  ]);
+  check("tuntutan dibina", /\/panel\/[^/]+$/.test(admin.url()), admin.url());
+
+  const claimUrl = admin.url();
+  const claimPage = await admin.textContent("main");
+  check("tuntutan diberi nombor siri", /TP-\d{4}-\d{5}/.test(claimPage), "tiada nombor tuntutan");
+  check("tuntutan mengandungi pesakit panel", claimPage.includes(panelName));
+  check("tuntutan menunjukkan no. ahli", claimPage.includes("PEK-12345"));
+
+  // ── CSV untuk key-in ke portal TPA ──
+  const csvResponse = await admin.request.get(`${claimUrl}/csv`);
+  check("CSV boleh dimuat turun", csvResponse.ok(), `status ${csvResponse.status()}`);
+  const csvText = await csvResponse.text();
+  check("CSV mengandungi tajuk lajur", csvText.includes("No. Invois") && csvText.includes("No. Ahli"));
+  check("CSV mengandungi pesakit panel", csvText.includes(panelName));
+  check("CSV mengandungi no. ahli", csvText.includes("PEK-12345"));
+  check(
+    "CSV bermula dengan BOM untuk Excel",
+    csvText.charCodeAt(0) === 0xfeff,
+    "tiada BOM",
+  );
+
+  // ── Hantar dan bayar ──
+  await admin.click('button:has-text("Tandakan telah dihantar")');
+  await admin.waitForFunction(
+    () => document.querySelector("main")?.textContent?.includes("Rekod bayaran panel"),
+    null,
+    { timeout: 15000 },
+  );
+  check("tuntutan ditanda dihantar", true);
+
+  await admin.click('button:has-text("Rekod bayaran panel")');
+  await admin.waitForFunction(
+    () => document.querySelector("main")?.textContent?.includes("dibayar sepenuhnya"),
+    null,
+    { timeout: 15000 },
+  );
+  const paidClaim = await admin.textContent("main");
+  check("tuntutan ditanda dibayar", paidClaim.includes("dibayar sepenuhnya"));
+
+  // ── Tuntutan berganda mesti mustahil ──
+  await admin.goto(`${BASE}/panel`, { waitUntil: "domcontentloaded" });
+  await admin.selectOption("#panelId", { index: 1 });
+  await admin.fill("#periodStart", todayIso);
+  await admin.fill("#periodEnd", todayIso);
+  await admin.click('button:has-text("Bina tuntutan")');
+  // Padankan teks kandungan utama, bukan elemen [role="alert"] pertama:
+  // halaman membawa lebih daripada satu nod peranan alert dan susunannya
+  // tidak dijamin.
+  await admin.waitForFunction(
+    () => document.querySelector("main")?.textContent?.includes("belum dituntut dalam tempoh ini"),
+    null,
+    { timeout: 15000 },
+  );
+  check("invois yang sudah dituntut tidak boleh dituntut semula", true);
+  check(
+    "kekal pada halaman panel dan bukan mencipta tuntutan kosong",
+    /\/panel$/.test(admin.url()),
+    admin.url(),
+  );
+
+  console.log("\n9. Laporan");
+  await admin.goto(`${BASE}/laporan`, { waitUntil: "domcontentloaded" });
+  const reports = await admin.textContent("main");
+  // Bayaran tunai RM28.60 daripada langkah 6 mesti muncul dalam kutipan.
+  check("laporan menunjukkan kutipan tunai", reports.includes("Tunai"));
+  check("laporan menunjukkan diagnosis teratas", reports.includes("Demam"));
+  check("laporan menunjukkan penggunaan ubat", reports.includes("Paracetamol 500mg"));
+  check("laporan menunjukkan produktiviti doktor", reports.includes("Dr. Contoh"));
+
+  // Bayaran panel direkod sebagai kaedah PANEL, bukan tunai — jika tidak
+  // penyata tutup kaunter akan tersalah kira wang dalam laci.
+  check("bayaran panel diasingkan daripada tunai", reports.includes("Panel"));
+
+  await adminCtx.close();
 } finally {
   await ctx.close();
   await browser.close();
