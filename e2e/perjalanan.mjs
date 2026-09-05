@@ -121,6 +121,120 @@ try {
   await page.waitForURL(/\/pendaftaran\/pesakit\//, { timeout: 15000 });
   const reopened = await page.textContent("body");
   check("rekod menunjukkan amaran lawatan terbuka", reopened.includes("Lawatan terbuka"));
+
+  console.log("\n4. Konsultasi doktor");
+  // Konteks baharu supaya kaunter kekal log masuk pada yang pertama.
+  const doctorCtx = await browser.newContext();
+  const doc = await doctorCtx.newPage();
+  await login(doc, "doktor");
+
+  await doc.goto(`${BASE}/konsultasi`, { waitUntil: "domcontentloaded" });
+  const listBody = await doc.textContent("body");
+  check("pesakit muncul dalam senarai konsultasi", listBody.includes(name));
+
+  // Mula rawatan pada baris pesakit ini.
+  const row = doc.locator("tr", { hasText: name });
+  await Promise.all([
+    doc.waitForURL(/\/konsultasi\/[^/]+$/, { timeout: 15000 }),
+    row.locator('button:has-text("Mula rawatan")').click(),
+  ]);
+  check("konsultasi dibuka", /\/konsultasi\/[^/]+$/.test(doc.url()), doc.url());
+
+  const fresh = await doc.textContent("main");
+  check("tiada alahan direkod pada mulanya", fresh.includes("Tiada alahan direkod"));
+
+  // ── Alahan mesti muncul sebagai amaran merah ──
+  await doc.click('button:has-text("Rekod alahan")');
+  await doc.fill("#allergen", "Penicillin");
+  await doc.fill("#reaction", "Ruam teruk");
+  await doc.selectOption("#severity", "TERUK");
+  await doc.click('button:has-text("Simpan alahan")');
+  await doc.waitForFunction(
+    () => document.body.textContent.includes("⚠ ALAHAN"),
+    null,
+    { timeout: 10000 },
+  );
+  const withAllergy = await doc.textContent("main");
+  check("banner alahan muncul", withAllergy.includes("⚠ ALAHAN"));
+  check("banner menunjukkan bahan alahan", withAllergy.includes("Penicillin"));
+
+  // ── BMI dikira daripada berat dan tinggi ──
+  await doc.fill("#weightKg", "70");
+  await doc.fill("#heightCm", "170");
+  await doc.waitForFunction(
+    () => document.querySelector('[data-testid="bmi"]')?.textContent?.includes("24.2"),
+    null,
+    { timeout: 5000 },
+  );
+  check("BMI dikira dengan betul", true);
+  await doc.click('button:has-text("Simpan tanda vital")');
+  await doc.waitForFunction(
+    () => document.body.textContent.includes("Tanda vital disimpan"),
+    null,
+    { timeout: 10000 },
+  );
+  check("tanda vital disimpan", true);
+
+  // ── Menutup tanpa diagnosis mesti ditolak ──
+  await doc.click('button:has-text("Tutup konsultasi")');
+  await doc.waitForFunction(
+    () => document.body.textContent.includes("sekurang-kurangnya satu diagnosis"),
+    null,
+    { timeout: 10000 },
+  );
+  check("menutup tanpa diagnosis ditolak", true);
+
+  // ── Diagnosis ICD-10 ──
+  await doc.fill('input[aria-label="Cari diagnosis"]', "demam");
+  await doc.waitForSelector('button:has-text("Demam")', { timeout: 5000 });
+  await doc.click('button:has-text("Demam")');
+  // Tunggu badge "Utama" DALAM kandungan utama.
+  //
+  // Menunggu "R50.9" tidak berfungsi: kod itu masih dipaparkan dalam senarai
+  // cadangan carian, jadi ia sepadan sebelum senarai diagnosis dikemas kini.
+  // Menunggu "Utama" pada document.body juga tidak berfungsi — itu label
+  // pautan navigasi dashboard. Hanya "Utama" di dalam <main> yang unik.
+  await doc.waitForFunction(
+    () => document.querySelector("main")?.textContent?.includes("Utama"),
+    null,
+    { timeout: 10000 },
+  );
+  const withDx = await doc.textContent("main");
+  check("diagnosis ditambah", withDx.includes("R50.9"));
+  check("diagnosis pertama ditanda utama", withDx.includes("Utama"));
+
+  // ── Preskripsi: kuantiti dikira automatik ──
+  await doc.fill('input[aria-label="Cari ubat"]', "Paracetamol 500");
+  await doc.waitForSelector('button:has-text("Paracetamol 500mg")', { timeout: 5000 });
+  await doc.click('button:has-text("Paracetamol 500mg")');
+
+  // Lalai formulari: dos "1-2", 4 kali sehari, 3 hari.
+  // Had atas julat digunakan: 2 x 4 x 3 = 24.
+  await doc.waitForSelector('text=Dikira: 24', { timeout: 5000 });
+  check("kuantiti dikira daripada dos x kekerapan x tempoh", true);
+
+  await doc.click('button:has-text("Tambah ke preskripsi")');
+  await doc.waitForFunction(
+    () => document.body.textContent.includes("24 biji"),
+    null,
+    { timeout: 10000 },
+  );
+  const withRx = await doc.textContent("main");
+  check("ubat ditambah dengan kuantiti dikira", withRx.includes("24 biji"));
+  check("arahan label BM disimpan", withRx.includes("4 kali sehari"));
+
+  // ── Tutup konsultasi, pesakit ke dispensari ──
+  await Promise.all([
+    doc.waitForURL(/\/konsultasi$/, { timeout: 15000 }),
+    doc.click('button:has-text("Tutup konsultasi")'),
+  ]);
+  check("konsultasi ditutup", /\/konsultasi$/.test(doc.url()), doc.url());
+
+  await doc.goto(`${BASE}/queue`, { waitUntil: "domcontentloaded" });
+  const board2 = await doc.textContent("main");
+  check("pesakit berpindah ke dispensari", board2.includes(name));
+
+  await doctorCtx.close();
 } finally {
   await ctx.close();
   await browser.close();

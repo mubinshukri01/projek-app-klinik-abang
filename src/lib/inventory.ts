@@ -63,3 +63,44 @@ export async function onHandForDrug(drugId: string): Promise<number> {
   });
   return result._sum.quantityOnHand ?? 0;
 }
+
+export interface DrugWithStock {
+  id: string;
+  name: string;
+  form: string;
+  unit: string;
+  sellPrice: string;
+  isControlled: boolean;
+  onHand: number;
+  defaultDose: string | null;
+  defaultFrequency: string | null;
+  defaultDuration: number | null;
+  instructionsMs: string | null;
+}
+
+/**
+ * Formulari aktif dengan stok gabungan setiap ubat.
+ *
+ * Digunakan oleh pembina preskripsi supaya doktor nampak baki stok sebelum
+ * memilih. Satu pertanyaan dengan agregat, bukan satu pertanyaan setiap ubat.
+ */
+export function drugsWithStock() {
+  return prisma.$queryRaw<DrugWithStock[]>`
+    SELECT d."id",
+           d."name",
+           d."form"::text          AS "form",
+           d."unit",
+           d."sellPrice"::text     AS "sellPrice",
+           d."isControlled",
+           COALESCE(SUM(b."quantityOnHand"), 0)::int AS "onHand",
+           d."defaultDose",
+           d."defaultFrequency",
+           d."defaultDuration",
+           d."instructionsMs"
+    FROM "Drug" d
+    LEFT JOIN "DrugBatch" b ON b."drugId" = d."id" AND b."quantityOnHand" > 0
+    WHERE d."active" = true
+    GROUP BY d."id"
+    ORDER BY d."name" ASC
+  `;
+}
