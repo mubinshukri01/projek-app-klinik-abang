@@ -5,6 +5,7 @@ import { redirect } from "next/navigation";
 import { logAudit } from "@/lib/audit";
 import { requireArea } from "@/lib/auth";
 import { allocateFefo, allocateFromBatch, earliestExpiry, type BatchLot } from "@/lib/fefo";
+import { createDraftInvoice } from "@/lib/invoice";
 import { prisma } from "@/lib/prisma";
 
 export interface FormState {
@@ -167,7 +168,12 @@ export async function completeDispensing(
     return { error: `Masih ada ${pending.length} ubat belum didispense.` };
   }
 
-  await prisma.visit.update({ where: { id: visitId }, data: { status: "PAYMENT" } });
+  await prisma.$transaction(async (tx) => {
+    await tx.visit.update({ where: { id: visitId }, data: { status: "PAYMENT" } });
+    // Bil disediakan di sini supaya juruwang membuka skrin yang sudah lengkap.
+    await createDraftInvoice(tx, visitId);
+  });
+
   await logAudit({
     actorId: user.id,
     action: "UPDATE",

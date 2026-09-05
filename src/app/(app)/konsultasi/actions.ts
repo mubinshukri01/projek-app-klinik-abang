@@ -6,6 +6,7 @@ import { z } from "zod";
 import { logAudit } from "@/lib/audit";
 import { requireArea, type SessionUser } from "@/lib/auth";
 import { fromDateInput } from "@/lib/dates";
+import { createDraftInvoice } from "@/lib/invoice";
 import { calculateBmi, calculateQuantity } from "@/lib/prescription";
 import { prisma } from "@/lib/prisma";
 
@@ -450,6 +451,10 @@ export async function completeConsultation(
       data: { endedAt: new Date() },
     });
     await tx.visit.update({ where: { id: visitId }, data: { status: nextStatus } });
+    // Pesakit tanpa ubat terus ke kaunter, jadi bil mereka disediakan di sini.
+    if (nextStatus === "PAYMENT") {
+      await createDraftInvoice(tx, visitId);
+    }
   });
 
   await logAudit({

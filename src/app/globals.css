@@ -161,3 +161,96 @@ body {
     padding: 0;
   }
 }
+
+/* ── Resit 80mm ──────────────────────────────────────────────────
+ * Bersaiz untuk pencetak resit terma 80mm, yang standard di kaunter
+ * klinik Malaysia. Tiada warna atau latar belakang — pencetak terma
+ * hanya mencetak hitam.
+ */
+.receipt {
+  width: 72mm;
+  padding: 3mm;
+  font-family: var(--font-mono);
+  font-size: 8.5pt;
+  line-height: 1.35;
+  color: #000;
+}
+
+.receipt-head {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  text-align: center;
+  gap: 0.3mm;
+  padding-bottom: 2mm;
+  border-bottom: 1px dashed #000;
+}
+
+.receipt-head strong {
+  font-size: 11pt;
+  font-family: var(--font-sans);
+}
+
+.receipt-meta,
+.receipt-totals {
+  padding: 2mm 0;
+  border-bottom: 1px dashed #000;
+}
+
+.receipt-row {
+  display: flex;
+  justify-content: space-between;
+  gap: 3mm;
+}
+
+.receipt-row-strong {
+  font-weight: 700;
+  font-size: 10pt;
+}
+
+.receipt-lines {
+  width: 100%;
+  border-collapse: collapse;
+  padding: 2mm 0;
+}
+
+.receipt-lines td {
+  padding: 0.8mm 0;
+  vertical-align: top;
+}
+
+.receipt-desc {
+  padding-right: 2mm;
+}
+
+.receipt-amount {
+  text-align: right;
+  white-space: nowrap;
+}
+
+.receipt-sub {
+  display: block;
+  font-size: 7pt;
+}
+
+.receipt-note {
+  padding: 2mm 0;
+  font-weight: 700;
+  text-align: center;
+  border-bottom: 1px dashed #000;
+}
+
+.receipt-foot {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  text-align: center;
+  padding-top: 2mm;
+}
+
+@media print {
+  @page {
+    size: 80mm auto;
+    margin: 0;
+  }
+}

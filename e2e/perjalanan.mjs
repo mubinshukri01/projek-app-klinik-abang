@@ -317,6 +317,164 @@ try {
   check("pesakit kini menunggu bayaran", finalBoard.includes(name));
 
   await pharmCtx.close();
+
+  console.log("\n6. Kaunter bayaran");
+  const cashCtx = await browser.newContext();
+  const cash = await cashCtx.newPage();
+  await login(cash, "kaunter");
+
+  await cash.goto(`${BASE}/bil`, { waitUntil: "domcontentloaded" });
+  const billList = await cash.textContent("main");
+  check("pesakit menunggu di kaunter bayaran", billList.includes(name));
+
+  const billRow = cash.locator("tr", { hasText: name });
+  await Promise.all([
+    cash.waitForURL(/\/bil\/[^/]+$/, { timeout: 15000 }),
+    billRow.locator('a:has-text("Buka bil")').click(),
+  ]);
+
+  const draft = await cash.textContent("main");
+  // Bil dibina automatik semasa dispensari selesai:
+  // konsultasi RM25.00 + Paracetamol 24 x RM0.15 = RM3.60 → RM28.60
+  check("bil memasukkan caj konsultasi", draft.includes("Konsultasi Am"));
+  check("bil memasukkan ubat yang didispense", draft.includes("Paracetamol 500mg"));
+  check("jumlah bil dikira betul", draft.includes("28.60"), "tiada RM 28.60 pada bil");
+
+  await cash.click('button:has-text("Keluarkan invois")');
+  await cash.waitForFunction(
+    () => document.querySelector("main")?.textContent?.includes("INV-"),
+    null,
+    { timeout: 15000 },
+  );
+  const issued = await cash.textContent("main");
+  check("invois diberi nombor siri", /INV-\d{4}-\d{5}/.test(issued), "tiada nombor invois");
+
+  // Amaun lalai ialah baki penuh.
+  await cash.click('button:has-text("Terima bayaran")');
+  await cash.waitForFunction(
+    () => document.querySelector("main")?.textContent?.includes("Bayaran diterima"),
+    null,
+    { timeout: 15000 },
+  );
+  const paid = await cash.textContent("main");
+  check("bayaran direkod", paid.includes("Bayaran diterima"));
+  check("kaedah bayaran direkod", paid.includes("Tunai"));
+
+  // ── Resit ──
+  // Simpan URL bil: menavigasi ke resit meninggalkan halaman ini, dan
+  // goBack() merentas halaman cetak tidak boleh diharap.
+  const billUrl = cash.url();
+  const receiptHref = await cash.locator('a:has-text("Cetak resit")').first().getAttribute("href");
+  await cash.goto(`${BASE}${receiptHref}`, { waitUntil: "domcontentloaded" });
+  const receipt = await cash.textContent("body");
+  check("resit menunjukkan nama klinik", receipt.includes("Klinik Contoh Semenyih"));
+  check("resit menunjukkan nama pesakit", receipt.includes(name));
+  check("resit menunjukkan jumlah", receipt.includes("28.60"));
+  check("resit menunjukkan ucapan", receipt.includes("Terima kasih"));
+
+  await cash.goto(billUrl, { waitUntil: "domcontentloaded" });
+
+  // ── Tutup lawatan ──
+  await Promise.all([
+    cash.waitForURL(/\/bil$/, { timeout: 15000 }),
+    cash.click('button:has-text("Tutup lawatan")'),
+  ]);
+  check("lawatan ditutup", /\/bil$/.test(cash.url()), cash.url());
+
+  // ── Tutup kaunter mesti sepadan dengan bayaran ──
+  await cash.goto(`${BASE}/bil/tutup-kaunter`, { waitUntil: "domcontentloaded" });
+  const closing = await cash.textContent("main");
+  check("penyata tutup kaunter menyenaraikan bayaran", closing.includes(name));
+  check("penyata menunjukkan kutipan tunai", closing.includes("28.60"));
+
+  await cashCtx.close();
+
+  console.log("\n7. Lawatan panel — pesakit tidak membayar di kaunter");
+  const panelIc = testIc();
+  const panelName = `Pesakit Panel ${Date.now().toString().slice(-6)}`;
+
+  // Daftar pesakit panel (tiada ubat, jadi terus ke kaunter selepas konsultasi).
+  await page.goto(`${BASE}/pendaftaran/baru`, { waitUntil: "domcontentloaded" });
+  await page.fill("#idNumber", panelIc);
+  await page.fill("#name", panelName);
+  await page.check('input[name="consent"]');
+  await Promise.all([
+    page.waitForURL(/\/pendaftaran\/pesakit\//, { timeout: 15000 }),
+    page.click('button:has-text("Simpan pesakit")'),
+  ]);
+
+  await page.selectOption("#payerType", "PANEL");
+  await page.waitForSelector("#panelId", { timeout: 5000 });
+  await page.selectOption("#panelId", { index: 1 });
+  await page.fill("#employeeId", "PEK-12345");
+  await Promise.all([
+    page.waitForURL(/\/queue/, { timeout: 15000 }),
+    page.click('button:has-text("Daftar lawatan")'),
+  ]);
+  check("lawatan panel didaftarkan", /\/queue/.test(page.url()), page.url());
+
+  // Doktor: diagnosis sahaja, tiada preskripsi.
+  const docCtx2 = await browser.newContext();
+  const doc2 = await docCtx2.newPage();
+  await login(doc2, "doktor");
+  await doc2.goto(`${BASE}/konsultasi`, { waitUntil: "domcontentloaded" });
+  const panelRow = doc2.locator("tr", { hasText: panelName });
+  await Promise.all([
+    doc2.waitForURL(/\/konsultasi\/[^/]+$/, { timeout: 15000 }),
+    panelRow.locator('button:has-text("Mula rawatan")').click(),
+  ]);
+  await doc2.fill('input[aria-label="Cari diagnosis"]', "darah tinggi");
+  await doc2.waitForSelector('button:has-text("Darah tinggi")', { timeout: 5000 });
+  await doc2.click('button:has-text("Darah tinggi")');
+  await doc2.waitForFunction(
+    () => document.querySelector("main")?.textContent?.includes("Utama"),
+    null,
+    { timeout: 10000 },
+  );
+  await Promise.all([
+    doc2.waitForURL(/\/konsultasi$/, { timeout: 15000 }),
+    doc2.click('button:has-text("Tutup konsultasi")'),
+  ]);
+  await docCtx2.close();
+
+  // Kaunter: pesakit panel tidak membayar.
+  const cashCtx2 = await browser.newContext();
+  const cash2 = await cashCtx2.newPage();
+  await login(cash2, "kaunter");
+  await cash2.goto(`${BASE}/bil`, { waitUntil: "domcontentloaded" });
+  const panelBillRow = cash2.locator("tr", { hasText: panelName });
+  await Promise.all([
+    cash2.waitForURL(/\/bil\/[^/]+$/, { timeout: 15000 }),
+    panelBillRow.locator('a:has-text("Buka bil")').click(),
+  ]);
+
+  const panelBill = await cash2.textContent("main");
+  check("bil panel menerangkan pesakit tidak membayar", panelBill.includes("tidak membayar di kaunter"));
+  check("bil panel menunjukkan nama panel", panelBill.includes("PEK-12345"));
+
+  await cash2.click('button:has-text("Keluarkan invois")');
+  await cash2.waitForFunction(
+    () => document.querySelector("main")?.textContent?.includes("INV-"),
+    null,
+    { timeout: 15000 },
+  );
+
+  const issuedPanel = await cash2.textContent("main");
+  // Tiada borang bayaran untuk lawatan panel — pesakit pulang tanpa membayar.
+  check("tiada borang terima bayaran untuk panel", !issuedPanel.includes("Terima bayaran"));
+
+  await Promise.all([
+    cash2.waitForURL(/\/bil$/, { timeout: 15000 }),
+    cash2.click('button:has-text("Tutup lawatan")'),
+  ]);
+  check("lawatan panel ditutup tanpa bayaran", /\/bil$/.test(cash2.url()), cash2.url());
+
+  // Invois panel mesti kekal tertunggak untuk dituntut kemudian.
+  await cash2.goto(`${BASE}/bil/tutup-kaunter`, { waitUntil: "domcontentloaded" });
+  const closing2 = await cash2.textContent("main");
+  check("penyata menunjukkan invois panel tertunggak", closing2.includes("Tertunggak"));
+
+  await cashCtx2.close();
 } finally {
   await ctx.close();
   await browser.close();
