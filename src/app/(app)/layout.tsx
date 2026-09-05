@@ -1,3 +1,4 @@
+import Link from "next/link";
 import { AppNav } from "@/components/app-nav";
 import { LogoutButton } from "@/components/logout-button";
 import { ROLE_LABEL, requireUser } from "@/lib/auth";
@@ -17,10 +18,13 @@ export default async function AppLayout({ children }: LayoutProps<"/">) {
             {clinic?.name ?? "Sistem Klinik"}
           </span>
           <div className="flex items-center gap-3">
-            <span className="text-right text-xs leading-tight text-ink-soft">
+            <Link
+              href="/akaun"
+              className="text-right text-xs leading-tight text-ink-soft hover:text-brand"
+            >
               <span className="block font-medium text-ink">{user.name}</span>
               {ROLE_LABEL[user.role]}
-            </span>
+            </Link>
             <LogoutButton />
           </div>
         </div>

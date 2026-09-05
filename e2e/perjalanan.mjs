@@ -37,14 +37,25 @@ function testIc() {
   return `900101` + `10` + serial + `3`;
 }
 
-async function login(page, username) {
+/**
+ * Selepas React memasang, ubah hala tindakan pelayan ialah navigasi sisi
+ * klien — tiada event "load" yang dilepaskan, jadi waitForURL lalai akan
+ * tergantung. Tinjau laluan sebenar sebaliknya.
+ */
+async function waitForPath(page, predicate, timeout = 15000) {
+  await page.waitForFunction(
+    (fnBody) => new Function("p", `return (${fnBody})(p)`)(location.pathname),
+    predicate.toString(),
+    { timeout },
+  );
+}
+
+async function login(page, username, password = PASSWORD) {
   await page.goto(`${BASE}/login`, { waitUntil: "domcontentloaded" });
   await page.fill("#username", username);
-  await page.fill("#password", PASSWORD);
-  await Promise.all([
-    page.waitForURL((url) => !url.pathname.startsWith("/login"), { timeout: 15000 }),
-    page.click('button[type="submit"]'),
-  ]);
+  await page.fill("#password", password);
+  await page.click('button[type="submit"]');
+  await waitForPath(page, (p) => !p.startsWith("/login"));
 }
 
 const browser = await chromium.launch(launchOptions);
@@ -631,6 +642,133 @@ try {
   // Bayaran panel direkod sebagai kaedah PANEL, bukan tunai — jika tidak
   // penyata tutup kaunter akan tersalah kira wang dalam laci.
   check("bayaran panel diasingkan daripada tunai", reports.includes("Panel"));
+
+  console.log("\n10. Tetapan — kata laluan dan formulari");
+
+  // ── Cipta pengguna, kemudian tukar kata laluannya sendiri ──
+  const staffUser = `ujian${Date.now().toString().slice(-8)}`;
+  const staffPass = "kata-laluan-ujian-1";
+  const staffNewPass = "kata-laluan-ujian-2";
+
+  await admin.goto(`${BASE}/tetapan/pengguna`, { waitUntil: "domcontentloaded" });
+  await admin.fill("#username", staffUser);
+  await admin.fill("#name", "Kakitangan Ujian");
+  await admin.selectOption("#role", "FRONTDESK");
+  await admin.fill("#password", staffPass);
+  await admin.click('button:has-text("Cipta pengguna")');
+  await admin.waitForFunction(
+    (u) => document.querySelector("main")?.textContent?.includes(u),
+    staffUser,
+    { timeout: 15000 },
+  );
+  check("pengguna baharu dicipta", true);
+
+  const staffCtx = await browser.newContext();
+  const staff = await staffCtx.newPage();
+  await login(staff, staffUser, staffPass);
+  check("pengguna baharu boleh log masuk", new URL(staff.url()).pathname === "/", staff.url());
+
+  await staff.goto(`${BASE}/akaun`, { waitUntil: "domcontentloaded" });
+  await staff.fill("#currentPassword", staffPass);
+  await staff.fill("#newPassword", staffNewPass);
+  await staff.fill("#confirmPassword", staffNewPass);
+  await staff.click('button:has-text("Tukar kata laluan")');
+  await staff.waitForFunction(
+    () => document.querySelector("main")?.textContent?.includes("Kata laluan ditukar"),
+    null,
+    { timeout: 15000 },
+  );
+  check("kata laluan sendiri boleh ditukar", true);
+
+  // Kata laluan lama mesti berhenti berfungsi, yang baharu mesti berfungsi.
+  const recheckCtx = await browser.newContext();
+  const recheck = await recheckCtx.newPage();
+  // Tunggu hydration selesai sebelum menghantar.
+  //
+  // Sebelum React memasang, borang dihantar sebagai POST pelayar biasa dan
+  // halaman dimuat semula sepenuhnya, yang mengosongkan setiap medan. Itu
+  // kelakuan peningkatan progresif yang betul, tetapi ia bukan yang dialami
+  // pengguna sebenar, jadi ujian ini menunggu keadaan yang sama seperti mereka.
+  await recheck.goto(`${BASE}/login`, { waitUntil: "load" });
+  await recheck.waitForLoadState("networkidle");
+  await recheck.fill("#username", staffUser);
+  await recheck.fill("#password", staffPass);
+  await recheck.click('button[type="submit"]');
+  await recheck.waitForSelector('[role="alert"]', { timeout: 15000 });
+  check(
+    "kata laluan lama ditolak selepas ditukar",
+    new URL(recheck.url()).pathname === "/login",
+    recheck.url(),
+  );
+
+  // Nama pengguna mesti kekal selepas cubaan gagal — kakitangan tidak
+  // sepatutnya menaip semula kedua-dua medan.
+  check(
+    "nama pengguna kekal selepas log masuk gagal",
+    (await recheck.inputValue("#username")) === staffUser,
+    "medan nama pengguna dikosongkan",
+  );
+
+  // React menetapkan semula medan tidak terkawal selepas tindakan borang
+  // selesai. Tunggu penetapan semula itu berlaku sebelum menaip semula, jika
+  // tidak kata laluan akan dipadam antara isian dan klik.
+  await recheck.waitForFunction(
+    () => document.querySelector("#password")?.value === "",
+    null,
+    { timeout: 10000 },
+  );
+  await recheck.fill("#password", staffNewPass);
+  await recheck.click('button[type="submit"]');
+  await waitForPath(recheck, (p) => !p.startsWith("/login"));
+  check("kata laluan baharu diterima", new URL(recheck.url()).pathname === "/", recheck.url());
+  await recheckCtx.close();
+  await staffCtx.close();
+
+  // ── Harga formulari hanya mempengaruhi preskripsi baharu ──
+  await admin.goto(`${BASE}/tetapan/formulari?cari=Paracetamol%20500`, {
+    waitUntil: "domcontentloaded",
+  });
+  const beforePrice = await admin.textContent("main");
+  check("formulari menunjukkan harga semasa", beforePrice.includes("RM 0.15"));
+
+  await admin.click('button:has-text("Sunting")');
+  await admin.waitForSelector('input[name="sellPrice"]', { timeout: 5000 });
+  await admin.fill('input[name="sellPrice"]', "0.20");
+  await admin.click('button:has-text("Simpan")');
+  await admin.waitForFunction(
+    () => document.querySelector("main")?.textContent?.includes("dikemas kini"),
+    null,
+    { timeout: 15000 },
+  );
+  await admin.goto(`${BASE}/tetapan/formulari?cari=Paracetamol%20500`, {
+    waitUntil: "domcontentloaded",
+  });
+  const afterPrice = await admin.textContent("main");
+  check("harga formulari dikemas kini", afterPrice.includes("RM 0.20"));
+
+  // Invois yang lalu mesti KEKAL pada harga asalnya.
+  await admin.goto(`${BASE}${receiptHref}`, { waitUntil: "domcontentloaded" });
+  const oldReceipt = await admin.textContent("body");
+  check(
+    "invois lalu tidak berubah bila harga formulari berubah",
+    oldReceipt.includes("28.60"),
+    "jumlah resit lama berubah",
+  );
+
+  // Pulihkan harga supaya ujian ini boleh dijalankan berulang kali.
+  await admin.goto(`${BASE}/tetapan/formulari?cari=Paracetamol%20500`, {
+    waitUntil: "domcontentloaded",
+  });
+  await admin.click('button:has-text("Sunting")');
+  await admin.waitForSelector('input[name="sellPrice"]', { timeout: 5000 });
+  await admin.fill('input[name="sellPrice"]', "0.15");
+  await admin.click('button:has-text("Simpan")');
+  await admin.waitForFunction(
+    () => document.querySelector("main")?.textContent?.includes("dikemas kini"),
+    null,
+    { timeout: 15000 },
+  );
+  check("harga dipulihkan untuk larian seterusnya", true);
 
   await adminCtx.close();
 } finally {

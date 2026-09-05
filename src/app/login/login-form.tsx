@@ -1,6 +1,6 @@
 "use client";
 
-import { useActionState } from "react";
+import { useActionState, useState } from "react";
 import { Alert } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
 import { Field, Input } from "@/components/ui/field";
@@ -11,6 +11,16 @@ const INITIAL: LoginState = { error: null };
 export function LoginForm() {
   const [state, formAction, pending] = useActionState(login, INITIAL);
 
+  /*
+   * Nama pengguna dikawal oleh React dengan sengaja.
+   *
+   * React 19 menetapkan semula borang tidak terkawal selepas satu tindakan
+   * borang selesai, jadi kata laluan yang salah akan mengosongkan KEDUA-DUA
+   * medan dan memaksa kakitangan menaip semula nama pengguna mereka. Kata
+   * laluan sengaja dibiarkan tidak terkawal — mengosongkannya adalah betul.
+   */
+  const [username, setUsername] = useState("");
+
   return (
     <form action={formAction} className="space-y-4">
       {state.error ? <Alert tone="danger">{state.error}</Alert> : null}
@@ -19,6 +29,8 @@ export function LoginForm() {
         <Input
           id="username"
           name="username"
+          value={username}
+          onChange={(e) => setUsername(e.target.value)}
           autoComplete="username"
           autoCapitalize="none"
           spellCheck={false}
