@@ -35,6 +35,23 @@ kekal berfungsi walaupun talian internet terputus.
 
 Perlukan Node.js 22+ dan PostgreSQL 16.
 
+**Menggunakan Windows?** Ikut [`docs/JALANKAN-WINDOWS.md`](docs/JALANKAN-WINDOWS.md)
+— panduan langkah demi langkah dengan arahan PowerShell dan penyelesaian
+masalah yang biasa berlaku.
+
+Cipta pangkalan data dahulu:
+
+```bash
+sudo -u postgres psql -c "CREATE ROLE klinik WITH LOGIN PASSWORD 'katalaluan_anda' CREATEDB;" \
+                     -c "CREATE DATABASE klinik OWNER klinik;"
+```
+
+`CREATEDB` diperlukan: `prisma migrate dev` mencipta pangkalan data bayangan
+sementara untuk mengesahkan migrasi. Tanpanya ia gagal dengan
+`permission denied to create database`.
+
+Kemudian:
+
 ```bash
 npm install
 cp .env.example .env          # isi DATABASE_URL, SESSION_SECRET, KIOSK_TOKEN
@@ -42,6 +59,10 @@ npm run db:migrate            # cipta skema dan jana klien Prisma
 npm run db:seed               # data rujukan + akaun permulaan
 npm run dev
 ```
+
+`DATABASE_URL` dalam `.env` menghala ke `localhost` untuk pembangunan
+tempatan. Docker Compose tidak membacanya — ia membina URL sendiri daripada
+pembolehubah `POSTGRES_*`.
 
 Akaun benih: `admin`, `doktor`, `jururawat`, `kaunter`, `farmasi`
 Kata laluan lalai: `klinik1234` (boleh diubah melalui `SEED_PASSWORD`).
